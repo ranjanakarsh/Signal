@@ -107,7 +107,7 @@ let cancellable = publisher.sink { value in
 
 | Type    | Description |
 | -------- | ------- |
-| Signal<T>  | Multicasts values to multiple observers |
-| ValueSignal<T> | Replays latest values on new subscriptions |
-| AnySignal<T> | Type-erased wrapper for protocol abstraction |
-| SignalResult<T, E> | Convenience enum for result-based signaling |
+| `Signal<T>`  | Multicasts values to multiple observers |
+| `ValueSignal<T>` | Replays latest values on new subscriptions |
+| `AnySignal<T>` | Type-erased wrapper for protocol abstraction |
+| `SignalResult<T, E>` | Convenience enum for result-based signaling |
