@@ -25,7 +25,7 @@ Designed by [@ranjanakarsh](https://github.com/ranjanakarsh), it blends:
 
 ---
 
-## ✨ Features
+## Features
 
 - Actor-isolated signals for race-free data propagation  
 - Auto-cleanup of deallocated subscribers  
@@ -39,7 +39,7 @@ Designed by [@ranjanakarsh](https://github.com/ranjanakarsh), it blends:
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### Swift Package Manager (Recommended)
 
@@ -55,7 +55,7 @@ import Signal
 ---
 
 ## Quick Start
-### Basic Usage
+Basic Usage
 
 ```swift
 let signal = Signal<String>()
@@ -103,7 +103,7 @@ let cancellable = publisher.sink { value in
 
 ## Architecture
 
-### Signal Types
+Signal Types
 
 | Type    | Description |
 | -------- | ------- |
@@ -151,3 +151,6 @@ This project draws conceptual inspiration form:
 - RxSwift
 - The Composable Architecture (TCA)
 - SignalKit
+
+## License
+MIT @ [Ranjan Akarsh](https://github.com/ranjanakarsh)
