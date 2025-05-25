@@ -111,3 +111,43 @@ let cancellable = publisher.sink { value in
 | `ValueSignal<T>` | Replays latest values on new subscriptions |
 | `AnySignal<T>` | Type-erased wrapper for protocol abstraction |
 | `SignalResult<T, E>` | Convenience enum for result-based signaling |
+
+## Debugging
+
+Enable debug tracking:
+
+```swift
+signal.setDebugOptions(Signal.DebugOptions(
+    name: "AuthSignal",
+    loggingEnabled: true
+))
+```
+Support for `os_signpost` tracing is included.
+
+## Design philosophy
+- Favor Swift-native concurrency over legacy locks
+- Maintain decoupled logic with high composability
+- Provide low-cost reactivity for UI and real-time systems
+- Keep APIs simple and intuitive, but flexible
+
+## Roadmap
+- Signal-to-async/await stream bridging
+- SwiftUI property wrappers
+- ReplaySubject-style hot signals
+- DevTools visual debugging inspector
+- SignalGroup for bulk coordination
+
+## Contributing
+Want to help? Contributions are welcome!
+- Open an issue or submit a feature request
+- Fort the repo and create a PR
+- Write tests for new features
+
+> Please ensure your changes are covered with tests and follow Swift style guides.
+
+## Inspiration
+This project draws conceptual inspiration form:
+- Combine
+- RxSwift
+- The Composable Architecture (TCA)
+- SignalKit
