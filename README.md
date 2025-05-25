@@ -28,7 +28,9 @@ Designed by [@ranjanakarsh](https://github.com/ranjanakarsh), it blends:
 ## Features
 
 - Actor-isolated signals for race-free data propagation  
-- Auto-cleanup of deallocated subscribers  
+- Auto-cleanup of deallocated subscribers
+- Built entirely with actor isolation for thread safety
+- async/await-based subsription model
 - `emit`, `complete`, `fail` for lifecycle awareness  
 - Type-safe events: `.next`, `.completed`, `.failed`  
 - Value replay with configurable buffer size (`ValueSignal`)  
@@ -60,17 +62,19 @@ Basic Usage
 ```swift
 let signal = Signal<String>()
 
-let token = signal.subscribe(owner: self) { value in
+let token = await signal.subscribe(owner: self) { value in
     print("Received:", value)
 }
 
 signal.emit("Hello world!")
 ```
 
+> Note: all subscribe(...) methods are now async to support actor isolation and concurrency safety. Use await when subscribing to signals.
+
 ### With Completion and Failure
 
 ```swift
-signal.subscribeEvent(owner: self) { event in
+await signal.subscribeEvent(owner: self) { event in
     switch event {
     case .next(let value): print("Received:", value)
     case .completed: print("Signal completed")
@@ -88,7 +92,7 @@ let valueSignal = ValueSignal<Int>(replayCount: 2)
 valueSignal.emit(1)
 valueSignal.emit(2)
 
-valueSignal.subscribe(owner: self) { value in
+await valueSignal.subscribe(owner: self) { value in
     print("Got replayed value:", value)
 }
 ```
@@ -107,9 +111,9 @@ Signal Types
 
 | Type    | Description |
 | -------- | ------- |
-| `Signal<T>`  | Multicasts values to multiple observers |
-| `ValueSignal<T>` | Replays latest values on new subscriptions |
-| `AnySignal<T>` | Type-erased wrapper for protocol abstraction |
+| `Signal<T>`  | Actor-isolated broadcast channel, async-safe subscriptions |
+| `ValueSignal<T>` | Cached value signal with replayCount, built on Signal |
+| `AnySignal<T>` | Type-erased wrapper supporting async subscribe |
 | `SignalResult<T, E>` | Convenience enum for result-based signaling |
 
 ## Debugging
