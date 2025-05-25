@@ -45,3 +45,69 @@ Designed by [@ranjanakarsh](https://github.com/ranjanakarsh), it blends:
 
 ```swift
 .package(url: "https://github.com/ranjanakarsh/Signal.swift.git", from: "1.0.0")
+```
+
+Then import:
+```swift
+import Signal
+```
+
+---
+
+## Quick Start
+### Basic Usage
+
+```swift
+let signal = Signal<String>()
+
+let token = signal.subscribe(owner: self) { value in
+    print("Received:", value)
+}
+
+signal.emit("Hello world!")
+```
+
+### With Completion and Failure
+
+```swift
+signal.subscribeEvent(owner: self) { event in
+    switch event {
+    case .next(let value): print("Received:", value)
+    case .completed: print("Signal completed")
+    case .failed(let error): print("Error:", error)
+    }
+}
+
+signal.emit("final value")
+signal.complete()
+```
+
+### Value Replay
+```swift
+let valueSignal = ValueSignal<Int>(replayCount: 2)
+valueSignal.emit(1)
+valueSignal.emit(2)
+
+valueSignal.subscribe(owner: self) { value in
+    print("Got replayed value:", value)
+}
+```
+
+### Combine Integration
+```swift
+let publisher = await signal.publisher
+let cancellable = publisher.sink { value in
+    print("Combine received:", value)
+}
+```
+
+## Architecture
+
+### Signal Types
+
+| Type    | Description |
+| -------- | ------- |
+| Signal<T>  | Multicasts values to multiple observers |
+| ValueSignal<T> | Replays latest values on new subscriptions |
+| AnySignal<T> | Type-erased wrapper for protocol abstraction |
+| SignalResult<T, E> | Convenience enum for result-based signaling |
