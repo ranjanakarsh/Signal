@@ -12,7 +12,7 @@ public protocol SignalProtocol<T> {
     
     /// Subscribe to signal emissions
     @discardableResult
-    func subscribe(owner: AnyObject, queue: DispatchQueue?, handler: @escaping @Sendable (T) -> Void) -> SignalToken
+    func subscribe(owner: AnyObject, queue: DispatchQueue?, handler: @escaping @Sendable (T) -> Void) async -> SignalToken
     
     /// Emit a value to all subscribers
     func emit(_ value: T)
@@ -51,11 +51,17 @@ public actor Signal<T>: SignalProtocol {
     
     public init(debugName: String? = nil) {
         self.debugOptions.name = debugName
-        logDebug("Signal initialized")
+        if debugOptions.loggingEnabled {
+            let name = debugName ?? "Signal<\(T.self)>"
+            print("[\(name)] Signal initialized")
+        }
     }
     
     deinit {
-        logDebug("Signal deinitializing with \(subscribers.count) subscribers")
+        if debugOptions.loggingEnabled {
+            let name = debugOptions.name ?? "Signal<\(T.self)>"
+            print("[\(name)] Signal deinitializing with \(subscribers.count) subscribers")
+        }
     }
     
     // MARK: - Subscription Management
@@ -71,7 +77,7 @@ public actor Signal<T>: SignalProtocol {
         owner: AnyObject,
         queue: DispatchQueue? = .main,
         handler: @escaping @Sendable (T) -> Void
-    ) -> SignalToken {
+    ) async -> SignalToken {
         let token = createToken()
         let info = SubscriberInfo(owner: owner, queue: queue, handler: handler)
         
@@ -92,7 +98,7 @@ public actor Signal<T>: SignalProtocol {
         owner: AnyObject,
         queue: DispatchQueue? = .main,
         handler: @escaping @Sendable (Event<T>) -> Void
-    ) -> SignalToken {
+    ) async -> SignalToken {
         let token = createToken()
         let info = SubscriberInfo(
             owner: owner,
@@ -144,7 +150,7 @@ public actor Signal<T>: SignalProtocol {
             
             if let eventHandler = info.eventHandler {
                 dispatchToQueue(info.queue) {
-                    eventHandler(.next(value))
+                    eventHandler(Event.next(value))
                 }
             }
         }
@@ -163,18 +169,21 @@ public actor Signal<T>: SignalProtocol {
         Task {
             await withCheckedContinuation { continuation in
                 queue.async {
-                    Task { @MainActor in
-                        if self.throttleWorkItem == nil {
-                            // Emit immediately and set up the throttle timer
-                            Task { await self._emit(value) }
+                    Task {
+                        // Check if we can emit (throttle check)
+                        let shouldEmit = await self.canEmitThrottled()
+                        if shouldEmit {
+                            // Emit immediately
+                            await self._emit(value)
                             
+                            // Set up the throttle timer
                             let workItem = DispatchWorkItem {
-                                Task { @MainActor in
-                                    self.throttleWorkItem = nil
+                                Task {
+                                    await self.clearThrottleWorkItem()
                                 }
                             }
                             
-                            self.throttleWorkItem = workItem
+                            await self.setThrottleWorkItem(workItem)
                             queue.asyncAfter(deadline: .now() + interval, execute: workItem)
                         }
                         continuation.resume()
@@ -197,9 +206,11 @@ public actor Signal<T>: SignalProtocol {
         Task {
             await withCheckedContinuation { continuation in
                 queue.async {
-                    Task { @MainActor in
+                    Task {
                         // Cancel any existing work item
-                        self.debounceWorkItem?.cancel()
+                        if let workItem = await self.getAndClearDebounceWorkItem() {
+                            workItem.cancel()
+                        }
                         
                         // Create a new work item
                         let workItem = DispatchWorkItem {
@@ -208,7 +219,8 @@ public actor Signal<T>: SignalProtocol {
                             }
                         }
                         
-                        self.debounceWorkItem = workItem
+                        // Store the new work item
+                        await self.setDebounceWorkItem(workItem)
                         queue.asyncAfter(deadline: .now() + delay, execute: workItem)
                         continuation.resume()
                     }
@@ -250,7 +262,7 @@ public actor Signal<T>: SignalProtocol {
             
             if let eventHandler = info.eventHandler {
                 dispatchToQueue(info.queue) {
-                    eventHandler(.completed)
+                    eventHandler(Event<T>.completed)
                 }
             }
         }
@@ -264,7 +276,7 @@ public actor Signal<T>: SignalProtocol {
             
             if let eventHandler = info.eventHandler {
                 dispatchToQueue(info.queue) {
-                    eventHandler(.failed(error))
+                    eventHandler(Event<T>.failed(error))
                 }
             }
         }
@@ -312,12 +324,20 @@ public actor Signal<T>: SignalProtocol {
     }
     
     private func logDebug(_ message: String) {
-        guard debugOptions.loggingEnabled else { return }
-        
+        let isEnabled = debugOptions.loggingEnabled
         let name = debugOptions.name ?? "Signal<\(T.self)>"
-        if let signpostID = debugOptions.signpostID {
+        let signpostID = debugOptions.signpostID
+        
+        if isEnabled {
+            nonisolatedLogDebug(message: message, name: name, signpostID: signpostID)
+        }
+    }
+    
+    // Nonisolated version that doesn't access actor state
+    private nonisolated func nonisolatedLogDebug(message: String, name: String, signpostID: OSSignpostID?) {
+        if let signpostID = signpostID {
             let log = OSLog(subsystem: "com.signal", category: name)
-            os_signpost(.event, log: log, name: name, signpostID: signpostID, "%{public}@", message)
+            os_signpost(.event, log: log, name: "signal_event", signpostID: signpostID, "%{public}@: %{public}@", name, message)
         } else {
             print("[\(name)] \(message)")
         }
@@ -331,7 +351,7 @@ public actor Signal<T>: SignalProtocol {
             let subject = PassthroughSubject<T, Never>()
             
             // Subscribe to our signal and forward events to the subject
-            let token = subscribe(owner: SignalCombineAdapter()) { value in
+            let token = await subscribe(owner: SignalCombineAdapter()) { value in
                 subject.send(value)
             }
             
@@ -348,6 +368,29 @@ public actor Signal<T>: SignalProtocol {
     
     // Helper class to keep the subscription alive
     private class SignalCombineAdapter {}
+    
+    // Helper methods for actor-isolated properties
+    private func canEmitThrottled() -> Bool {
+        return throttleWorkItem == nil
+    }
+    
+    private func setThrottleWorkItem(_ workItem: DispatchWorkItem) {
+        throttleWorkItem = workItem
+    }
+    
+    private func clearThrottleWorkItem() {
+        throttleWorkItem = nil
+    }
+    
+    private func getAndClearDebounceWorkItem() -> DispatchWorkItem? {
+        let workItem = debounceWorkItem
+        debounceWorkItem = nil
+        return workItem
+    }
+    
+    private func setDebounceWorkItem(_ workItem: DispatchWorkItem) {
+        debounceWorkItem = workItem
+    }
 }
 
 // MARK: - Signal Token
@@ -365,25 +408,26 @@ public struct SignalToken: Hashable, Equatable {
     }
 }
 
-// MARK: - Subscriber Info
-
-/// Information about a subscriber
-private struct SubscriberInfo {
-    weak var owner: AnyObject?
-    let queue: DispatchQueue?
-    let handler: ((T) -> Void)?
-    let eventHandler: ((Signal<T>.Event<T>) -> Void)?
-    
-    init(
-        owner: AnyObject,
-        queue: DispatchQueue?,
-        handler: ((T) -> Void)? = nil,
-        eventHandler: ((Signal<T>.Event<T>) -> Void)? = nil
-    ) {
-        self.owner = owner
-        self.queue = queue
-        self.handler = handler
-        self.eventHandler = eventHandler
+// Move SubscriberInfo inside Signal as a nested type
+extension Signal {
+    /// Information about a subscriber
+    fileprivate struct SubscriberInfo {
+        weak var owner: AnyObject?
+        let queue: DispatchQueue?
+        let handler: ((T) -> Void)?
+        let eventHandler: ((Signal<T>.Event<T>) -> Void)?
+        
+        init(
+            owner: AnyObject,
+            queue: DispatchQueue?,
+            handler: ((T) -> Void)? = nil,
+            eventHandler: ((Signal<T>.Event<T>) -> Void)? = nil
+        ) {
+            self.owner = owner
+            self.queue = queue
+            self.handler = handler
+            self.eventHandler = eventHandler
+        }
     }
 }
 
@@ -423,7 +467,10 @@ public actor ValueSignal<T>: SignalProtocol {
         self.replayCount = max(1, replayCount)
         
         if let debugName = debugName {
-            signal.setDebugOptions(Signal.DebugOptions(name: debugName))
+            // Use Task to call the actor-isolated method asynchronously
+            Task {
+                await signal.setDebugOptions(Signal.DebugOptions(name: debugName))
+            }
         }
     }
     
@@ -438,7 +485,7 @@ public actor ValueSignal<T>: SignalProtocol {
         owner: AnyObject,
         queue: DispatchQueue? = .main,
         handler: @escaping @Sendable (T) -> Void
-    ) -> SignalToken {
+    ) async -> SignalToken {
         // Send cached values immediately
         for value in cachedValues {
             if let queue = queue {
@@ -462,7 +509,7 @@ public actor ValueSignal<T>: SignalProtocol {
         }
     }
     
-    private func _emit(_ value: T) {
+    private func _emit(_ value: T) async {
         // Update cache
         cachedValues.append(value)
         if cachedValues.count > replayCount {
@@ -521,13 +568,13 @@ public actor ValueSignal<T>: SignalProtocol {
 
 /// A type-erased signal wrapper
 public struct AnySignal<T>: SignalProtocol {
-    private let _subscribe: (AnyObject, DispatchQueue?, @escaping @Sendable (T) -> Void) -> SignalToken
+    private let _subscribe: (AnyObject, DispatchQueue?, @escaping @Sendable (T) -> Void) async -> SignalToken
     private let _emit: (T) -> Void
     
     /// Initialize with a concrete signal implementation
-    public init<S: SignalProtocol>(_ signal: S) where S.T == T {
+    public init<S: SignalProtocol>(_ signal: S) async where S.T == T {
         self._subscribe = { owner, queue, handler in
-            signal.subscribe(owner: owner, queue: queue, handler: handler)
+            await signal.subscribe(owner: owner, queue: queue, handler: handler)
         }
         self._emit = { value in
             signal.emit(value)
@@ -540,8 +587,8 @@ public struct AnySignal<T>: SignalProtocol {
         owner: AnyObject,
         queue: DispatchQueue? = .main,
         handler: @escaping @Sendable (T) -> Void
-    ) -> SignalToken {
-        _subscribe(owner, queue, handler)
+    ) async -> SignalToken {
+        await _subscribe(owner, queue, handler)
     }
     
     /// Emit a value to the underlying signal
