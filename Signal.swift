@@ -293,7 +293,7 @@ public actor Signal<T>: SignalProtocol {
         return SignalToken(id: id)
     }
     
-    private func dispatchToQueue(_ queue: DispatchQueue?, _ work: @escaping () -> Void) {
+    private func dispatchToQueue(_ queue: DispatchQueue?, _ work: @Sendable @escaping () -> Void) {
         if let queue = queue {
             queue.async(execute: work)
         } else {
@@ -359,7 +359,7 @@ public actor Signal<T>: SignalProtocol {
             return subject
                 .handleEvents(receiveCancel: {
                     Task {
-                        await self.unsubscribe(token: token)
+                        self.unsubscribe(token: token)
                     }
                 })
                 .eraseToAnyPublisher()
@@ -517,7 +517,7 @@ public actor ValueSignal<T>: SignalProtocol {
         }
         
         // Forward to underlying signal
-        await signal.emit(value)
+        signal.emit(value)
     }
     
     /// Completes the signal, preventing further emissions
